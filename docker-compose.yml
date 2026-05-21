@@ -1,0 +1,39 @@
+# Local / staging stack: the app plus a MongoDB container.
+# In EasyPanel you would instead use a one-click MongoDB database (or Atlas)
+# and set MONGODB_URI in the Environment tab.
+version: "3.8"
+
+services:
+  app:
+    build: .
+    image: taskmanager-api:latest
+    container_name: taskmanager-api
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongo:27017/taskmanager
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
+      - DEMO_USER=${DEMO_USER:-demo}
+      - DEMO_PASS=${DEMO_PASS:-demo123}
+    depends_on:
+      - mongo
+    restart: unless-stopped
+    networks:
+      - taskmanager-net
+
+  mongo:
+    image: mongo:7
+    container_name: taskmanager-mongo
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+    networks:
+      - taskmanager-net
+
+volumes:
+  mongo-data:
+
+networks:
+  taskmanager-net:
+    driver: bridge

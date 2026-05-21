@@ -1,0 +1,60 @@
+# Monitoring stack: app + MongoDB + Prometheus + Grafana.
+# Use this locally to demonstrate live metrics, dashboards, and alerts.
+version: "3.8"
+
+services:
+  app:
+    build: .
+    image: taskmanager-api:latest
+    container_name: taskmanager-api
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongo:27017/taskmanager
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
+    depends_on:
+      - mongo
+    restart: unless-stopped
+    networks:
+      - monitoring-net
+
+  mongo:
+    image: mongo:7
+    container_name: taskmanager-mongo
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - monitoring-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+    networks:
+      - monitoring-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASS:-admin}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring-net
+
+volumes:
+  mongo-data:
+
+networks:
+  monitoring-net:
+    driver: bridge
