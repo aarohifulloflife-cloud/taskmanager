@@ -70,7 +70,7 @@ pipeline {
         withCredentials([usernamePassword(credentialsId: 'dockerhub',
                           usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
           bat """
-            echo %DH_PASS% | docker login -u %DH_USER% --password-stdin
+            docker login -u %DH_USER% -p %DH_PASS%
             docker tag %IMAGE_NAME%:%IMAGE_TAG% %REGISTRY%/%IMAGE_NAME%:staging
             docker push %REGISTRY%/%IMAGE_NAME%:staging
           """
