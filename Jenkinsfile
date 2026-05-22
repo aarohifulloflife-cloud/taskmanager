@@ -1,22 +1,3 @@
-// Declarative Jenkins pipeline implementing all seven assessed stages:
-// Build, Test, Code Quality, Security, Deploy, Release, and Monitoring.
-//
-// WINDOWS edition: uses `bat` steps; multi-line waits use PowerShell.
-//
-// Deployment model: Jenkins is in control. It builds and pushes the Docker
-// image to Docker Hub, then calls the EasyPanel per-service "deploy URL" to
-// trigger a redeploy. EasyPanel pulls the new image and restarts the service.
-//   Deploy  -> staging  (image tag :staging)
-//   Release -> production (image tags :v1.0.<build> and :latest)
-//
-// Credentials configured in Jenkins > Manage Jenkins > Credentials:
-//   dockerhub             (username + password)
-//   easypanel-staging-url (secret text) - staging deploy URL
-//   easypanel-prod-url    (secret text) - production deploy URL
-//   sonar-token           (secret text)
-//   snyk-token            (secret text)
-//   github-token          (secret text)  [optional; Release won't fail without gh]
-
 pipeline {
   agent any
 
