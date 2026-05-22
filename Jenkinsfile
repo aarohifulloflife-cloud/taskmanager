@@ -17,10 +17,10 @@ pipeline {
   agent any
 
   environment {
-    IMAGE_NAME     = 'taskmanager-api'
+    IMAGE_NAME     = 'taskmanager'
     REGISTRY       = 'docker.io/aarohime'                 // change to your registry/user
     IMAGE_TAG      = "${env.BUILD_NUMBER}"
-    STAGING_URL    = 'https://taskmanager-staging.example.com'  // your EasyPanel staging domain
+    STAGING_URL    = 'https://taskmanager-taskmanager-staging.aqpjta.easypanel.host'  // your EasyPanel staging domain
     PROD_URL       = 'https://taskmanager.example.com'          // your EasyPanel production domain
     SONAR_HOST     = 'https://sonarcloud.io'
   }
