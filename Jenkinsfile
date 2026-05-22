@@ -138,9 +138,9 @@ pipeline {
           }
           if (-not $ok) { Write-Error "production did not become healthy in time"; exit 1 }
         '''
-        withCredentials([string(credentialsId: 'github-token', variable: 'GH_TOKEN')]) {
-          bat 'gh release create v1.0.%BUILD_NUMBER% --title "Release v1.0.%BUILD_NUMBER%" --notes "Automated release from Jenkins build %BUILD_NUMBER%" & exit 0'
-        }
+        // withCredentials([string(credentialsId: 'github-token', variable: 'GH_TOKEN')]) {
+        //   bat 'gh release create v1.0.%BUILD_NUMBER% --title "Release v1.0.%BUILD_NUMBER%" --notes "Automated release from Jenkins build %BUILD_NUMBER%" & exit 0'
+        // }
       }
     }
 
