@@ -1,28 +1,13 @@
-// Declarative Jenkins pipeline implementing all seven assessed stages:
-// Build, Test, Code Quality, Security, Deploy, Release, and Monitoring.
-//
-// Deployment model: Jenkins is in control. It builds and pushes the Docker
-// image to a registry, then calls the EasyPanel per-service "deploy URL" to
-// trigger a redeploy. EasyPanel pulls the new image and restarts the service.
-//
-// Configure these in Jenkins > Manage Jenkins > Credentials:
-//   dockerhub             (username + password) - image registry
-//   easypanel-staging-url (secret text)         - staging service deploy URL
-//   easypanel-prod-url    (secret text)         - production service deploy URL
-//   sonar-token           (secret text)
-//   snyk-token            (secret text)
-//   github-token          (secret text)
-
 pipeline {
   agent any
 
   environment {
-    IMAGE_NAME     = 'taskmanager'
-    REGISTRY       = 'docker.io/aarohime'                 // change to your registry/user
-    IMAGE_TAG      = "${env.BUILD_NUMBER}"
-    STAGING_URL    = 'https://taskmanager-taskmanager-staging.aqpjta.easypanel.host'  // your EasyPanel staging domain
-    PROD_URL       = 'https://taskmanager.example.com'          // your EasyPanel production domain
-    SONAR_HOST     = 'https://sonarcloud.io'
+    IMAGE_NAME  = 'taskmanager'
+    REGISTRY    = 'docker.io/aarohime'                          // your Docker Hub user
+    IMAGE_TAG   = "${env.BUILD_NUMBER}"
+    STAGING_URL = 'https://taskmanager-taskmanager-staging.aqpjta.easypanel.host'     // <-- set your EasyPanel staging domain
+    PROD_URL    = 'https://taskmanager.example.com'             // <-- set your EasyPanel production domain
+    SONAR_HOST  = 'https://sonarcloud.io'
   }
 
   options {
@@ -36,8 +21,8 @@ pipeline {
     stage('Build') {
       steps {
         echo 'Installing dependencies and building the Docker image artefact'
-        sh 'npm ci'
-        sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+        bat 'npm ci'
+        bat "docker build -t %IMAGE_NAME%:%IMAGE_TAG% ."
       }
     }
 
@@ -45,7 +30,7 @@ pipeline {
     stage('Test') {
       steps {
         echo 'Running Jest unit and Supertest integration tests with coverage'
-        sh 'npm test'
+        bat 'npm test'
       }
       post {
         always {
@@ -58,13 +43,9 @@ pipeline {
     stage('Code Quality') {
       steps {
         echo 'Running ESLint and SonarCloud analysis'
-        sh 'npm run lint'
+        bat 'npm run lint'
         withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-          sh """
-            npx sonar-scanner \
-              -Dsonar.host.url=${SONAR_HOST} \
-              -Dsonar.login=${SONAR_TOKEN}
-          """
+          bat "npx sonar-scanner -Dsonar.host.url=%SONAR_HOST% -Dsonar.login=%SONAR_TOKEN%"
         }
       }
     }
@@ -73,12 +54,11 @@ pipeline {
     stage('Security') {
       steps {
         echo 'Scanning dependencies with npm audit and Snyk'
-        sh 'npm audit --audit-level=high || echo "Review audit findings (documented in report)"'
+        // `|| true` has no Windows equivalent; use exit 0 so the stage does not fail on findings
+        bat 'npm audit --audit-level=high & exit 0'
         withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
-          sh '''
-            npx snyk auth $SNYK_TOKEN
-            npx snyk test --severity-threshold=high || true
-          '''
+          bat 'npx snyk auth %SNYK_TOKEN%'
+          bat 'npx snyk test --severity-threshold=high & exit 0'
         }
       }
     }
@@ -89,58 +69,59 @@ pipeline {
         echo 'Pushing the staging image and triggering an EasyPanel redeploy'
         withCredentials([usernamePassword(credentialsId: 'dockerhub',
                           usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
-          sh '''
-            echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
-            docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:staging
-            docker push ${REGISTRY}/${IMAGE_NAME}:staging
-          '''
+          bat """
+            echo %DH_PASS% | docker login -u %DH_USER% --password-stdin
+            docker tag %IMAGE_NAME%:%IMAGE_TAG% %REGISTRY%/%IMAGE_NAME%:staging
+            docker push %REGISTRY%/%IMAGE_NAME%:staging
+          """
         }
-        // Jenkins triggers EasyPanel's per-service deploy URL
         withCredentials([string(credentialsId: 'easypanel-staging-url', variable: 'EP_STAGING')]) {
-          sh 'curl -fsS -X POST "$EP_STAGING"'
+          bat 'curl -fsS -X POST "%EP_STAGING%"'
         }
         echo 'Waiting for staging to report healthy'
-        sh '''
-          for i in $(seq 1 15); do
-            if curl -sf ${STAGING_URL}/health; then echo " staging healthy"; exit 0; fi
-            echo "waiting..."; sleep 5
-          done
-          echo "staging did not become healthy in time"; exit 1
+        powershell '''
+          $ok = $false
+          for ($i = 0; $i -lt 15; $i++) {
+            try {
+              Invoke-RestMethod -Uri "$env:STAGING_URL/health" -TimeoutSec 5 | Out-Null
+              Write-Host "staging healthy"; $ok = $true; break
+            } catch { Write-Host "waiting..."; Start-Sleep -Seconds 5 }
+          }
+          if (-not $ok) { Write-Error "staging did not become healthy in time"; exit 1 }
         '''
       }
     }
 
     // ── 6. RELEASE (promote to EasyPanel production) ──────────────────────
     stage('Release') {
-      when { branch 'main' }
+      when { branch 'master' }
       steps {
         echo 'Tagging a versioned release image and triggering production redeploy'
         withCredentials([usernamePassword(credentialsId: 'dockerhub',
                           usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
-          sh '''
-            echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
-            docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:v1.0.${BUILD_NUMBER}
-            docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:latest
-            docker push ${REGISTRY}/${IMAGE_NAME}:v1.0.${BUILD_NUMBER}
-            docker push ${REGISTRY}/${IMAGE_NAME}:latest
-          '''
+          bat """
+            echo %DH_PASS% | docker login -u %DH_USER% --password-stdin
+            docker tag %IMAGE_NAME%:%IMAGE_TAG% %REGISTRY%/%IMAGE_NAME%:v1.0.%BUILD_NUMBER%
+            docker tag %IMAGE_NAME%:%IMAGE_TAG% %REGISTRY%/%IMAGE_NAME%:latest
+            docker push %REGISTRY%/%IMAGE_NAME%:v1.0.%BUILD_NUMBER%
+            docker push %REGISTRY%/%IMAGE_NAME%:latest
+          """
         }
         withCredentials([string(credentialsId: 'easypanel-prod-url', variable: 'EP_PROD')]) {
-          sh 'curl -fsS -X POST "$EP_PROD"'
+          bat 'curl -fsS -X POST "%EP_PROD%"'
         }
-        sh '''
-          for i in $(seq 1 15); do
-            if curl -sf ${PROD_URL}/health; then echo " production healthy"; exit 0; fi
-            echo "waiting..."; sleep 5
-          done
-          echo "production did not become healthy in time"; exit 1
+        powershell '''
+          $ok = $false
+          for ($i = 0; $i -lt 15; $i++) {
+            try {
+              Invoke-RestMethod -Uri "$env:PROD_URL/health" -TimeoutSec 5 | Out-Null
+              Write-Host "production healthy"; $ok = $true; break
+            } catch { Write-Host "waiting..."; Start-Sleep -Seconds 5 }
+          }
+          if (-not $ok) { Write-Error "production did not become healthy in time"; exit 1 }
         '''
         withCredentials([string(credentialsId: 'github-token', variable: 'GH_TOKEN')]) {
-          sh '''
-            gh release create v1.0.${BUILD_NUMBER} \
-              --title "Release v1.0.${BUILD_NUMBER}" \
-              --notes "Automated release from Jenkins build ${BUILD_NUMBER}" || true
-          '''
+          bat 'gh release create v1.0.%BUILD_NUMBER% --title "Release v1.0.%BUILD_NUMBER%" --notes "Automated release from Jenkins build %BUILD_NUMBER%" & exit 0'
         }
       }
     }
@@ -149,10 +130,12 @@ pipeline {
     stage('Monitoring') {
       steps {
         echo 'Verifying the deployed app exposes metrics for Prometheus'
-        sh 'curl -sf ${PROD_URL}/metrics | grep tasks_total'
-        echo 'Prometheus + Grafana run as services scraping ${PROD_URL}/metrics'
-        // For a local monitoring demo instead, run:
-        //   docker compose -f docker-compose.monitoring.yml up -d --build
+        powershell '''
+          $body = Invoke-RestMethod -Uri "$env:PROD_URL/metrics" -TimeoutSec 5
+          if ($body -match "tasks_total") { Write-Host "metrics present" }
+          else { Write-Error "tasks_total metric not found"; exit 1 }
+        '''
+        echo 'Prometheus + Grafana run as services scraping the production /metrics endpoint'
       }
     }
   }
