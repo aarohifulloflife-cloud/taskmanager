@@ -1,12 +1,31 @@
+// Declarative Jenkins pipeline implementing all seven assessed stages:
+// Build, Test, Code Quality, Security, Deploy, Release, and Monitoring.
+//
+// WINDOWS edition: uses `bat` steps; multi-line waits use PowerShell.
+//
+// Deployment model: Jenkins is in control. It builds and pushes the Docker
+// image to Docker Hub, then calls the EasyPanel per-service "deploy URL" to
+// trigger a redeploy. EasyPanel pulls the new image and restarts the service.
+//   Deploy  -> staging  (image tag :staging)
+//   Release -> production (image tags :v1.0.<build> and :latest)
+//
+// Credentials configured in Jenkins > Manage Jenkins > Credentials:
+//   dockerhub             (username + password)
+//   easypanel-staging-url (secret text) - staging deploy URL
+//   easypanel-prod-url    (secret text) - production deploy URL
+//   sonar-token           (secret text)
+//   snyk-token            (secret text)
+//   github-token          (secret text)  [optional; Release won't fail without gh]
+
 pipeline {
   agent any
 
   environment {
     IMAGE_NAME  = 'taskmanager'
-    REGISTRY    = 'docker.io/aarohime'                          // your Docker Hub user
+    REGISTRY    = 'docker.io/aarohime'
     IMAGE_TAG   = "${env.BUILD_NUMBER}"
-    STAGING_URL = 'https://taskmanager-taskmanager-staging.aqpjta.easypanel.host'     // <-- set your EasyPanel staging domain
-    PROD_URL    = 'https://taskmanager.example.com'             // <-- set your EasyPanel production domain
+    STAGING_URL = 'https://taskmanager-taskmanager-staging.aqpjta.easypanel.host'
+    PROD_URL    = 'https://taskmanager-taskmanager-prod.aqpjta.easypanel.host'
     SONAR_HOST  = 'https://sonarcloud.io'
   }
 
@@ -17,7 +36,7 @@ pipeline {
 
   stages {
 
-    // ── 1. BUILD ──────────────────────────────────────────────────────────
+    // -- 1. BUILD --
     stage('Build') {
       steps {
         echo 'Installing dependencies and building the Docker image artefact'
@@ -26,7 +45,7 @@ pipeline {
       }
     }
 
-    // ── 2. TEST ───────────────────────────────────────────────────────────
+    // -- 2. TEST --
     stage('Test') {
       steps {
         echo 'Running Jest unit and Supertest integration tests with coverage'
@@ -39,7 +58,7 @@ pipeline {
       }
     }
 
-    // ── 3. CODE QUALITY ───────────────────────────────────────────────────
+    // -- 3. CODE QUALITY --
     stage('Code Quality') {
       steps {
         echo 'Running ESLint and SonarCloud analysis'
@@ -50,11 +69,10 @@ pipeline {
       }
     }
 
-    // ── 4. SECURITY ───────────────────────────────────────────────────────
+    // -- 4. SECURITY --
     stage('Security') {
       steps {
         echo 'Scanning dependencies with npm audit and Snyk'
-        // `|| true` has no Windows equivalent; use exit 0 so the stage does not fail on findings
         bat 'npm audit --audit-level=high & exit 0'
         withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
           bat 'npx snyk auth %SNYK_TOKEN%'
@@ -63,7 +81,7 @@ pipeline {
       }
     }
 
-    // ── 5. DEPLOY (push image + trigger EasyPanel staging) ────────────────
+    // -- 5. DEPLOY (push staging image + trigger EasyPanel staging) --
     stage('Deploy') {
       steps {
         echo 'Pushing the staging image and triggering an EasyPanel redeploy'
@@ -92,15 +110,14 @@ pipeline {
       }
     }
 
-    // ── 6. RELEASE (promote to EasyPanel production) ──────────────────────
+    // -- 6. RELEASE (promote versioned image to EasyPanel production) --
     stage('Release') {
-      when { branch 'master' }
       steps {
         echo 'Tagging a versioned release image and triggering production redeploy'
         withCredentials([usernamePassword(credentialsId: 'dockerhub',
                           usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
           bat """
-            echo %DH_PASS% | docker login -u %DH_USER% --password-stdin
+            docker login -u %DH_USER% -p %DH_PASS%
             docker tag %IMAGE_NAME%:%IMAGE_TAG% %REGISTRY%/%IMAGE_NAME%:v1.0.%BUILD_NUMBER%
             docker tag %IMAGE_NAME%:%IMAGE_TAG% %REGISTRY%/%IMAGE_NAME%:latest
             docker push %REGISTRY%/%IMAGE_NAME%:v1.0.%BUILD_NUMBER%
@@ -110,6 +127,7 @@ pipeline {
         withCredentials([string(credentialsId: 'easypanel-prod-url', variable: 'EP_PROD')]) {
           bat 'curl -fsS -X POST "%EP_PROD%"'
         }
+        echo 'Waiting for production to report healthy'
         powershell '''
           $ok = $false
           for ($i = 0; $i -lt 15; $i++) {
@@ -126,22 +144,22 @@ pipeline {
       }
     }
 
-    // ── 7. MONITORING & ALERTING ──────────────────────────────────────────
+    // -- 7. MONITORING & ALERTING --
     stage('Monitoring') {
       steps {
-        echo 'Verifying the deployed app exposes metrics for Prometheus'
+        echo 'Verifying the production app exposes metrics for Prometheus'
         powershell '''
           $body = Invoke-RestMethod -Uri "$env:PROD_URL/metrics" -TimeoutSec 5
           if ($body -match "tasks_total") { Write-Host "metrics present" }
           else { Write-Error "tasks_total metric not found"; exit 1 }
         '''
-        echo 'Prometheus + Grafana run as services scraping the production /metrics endpoint'
+        echo 'Prometheus + Grafana scrape the production /metrics endpoint'
       }
     }
   }
 
   post {
-    success { echo 'Pipeline completed successfully — all stages green.' }
-    failure { echo 'Pipeline failed — check the stage logs above.' }
+    success { echo 'Pipeline completed successfully -- all seven stages green.' }
+    failure { echo 'Pipeline failed -- check the stage logs above.' }
   }
 }
